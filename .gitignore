@@ -1,0 +1,9 @@
+# Local scratch / secrets: never commit credentials
+*.json.key
+*-credentials.json
+credentials.json
+creds*.json
+*.pem
+kubeconfig*
+.env
+.DS_Store
