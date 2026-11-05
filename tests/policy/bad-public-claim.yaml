@@ -1,0 +1,17 @@
+# NEGATIVE FIXTURE: policy must reject this claim (public control-plane endpoint). Never apply.
+apiVersion: platform.example.org/v1alpha1
+kind: GKECluster
+metadata:
+  name: bad-public
+  namespace: default
+spec:
+  parameters:
+    projectId: REPLACE_WITH_GCP_PROJECT_ID
+    region: REPLACE_WITH_GCP_REGION
+    privateCluster:
+      enablePrivateNodes: false
+      enablePrivateEndpoint: false
+      masterCidr: 172.16.0.0/28
+    masterAuthorizedNetworks:
+      - cidrBlock: 0.0.0.0/0
+        displayName: the-internet

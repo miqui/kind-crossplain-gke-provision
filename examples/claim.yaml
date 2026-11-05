@@ -1,0 +1,28 @@
+# Example claim. All values are placeholders: replace projectId/region with yours.
+# Do NOT apply to a cluster with a configured ProviderConfig unless you accept the cost (see README).
+apiVersion: platform.example.org/v1alpha1
+kind: GKECluster
+metadata:
+  name: demo
+  namespace: default
+spec:
+  parameters:
+    projectId: REPLACE_WITH_GCP_PROJECT_ID
+    region: REPLACE_WITH_GCP_REGION
+    network:
+      subnetCidr: 10.10.0.0/20
+      podsCidr: 10.20.0.0/16
+      servicesCidr: 10.30.0.0/20
+    privateCluster:
+      enablePrivateNodes: true
+      enablePrivateEndpoint: true
+      masterCidr: 172.16.0.0/28
+    masterAuthorizedNetworks:
+      - cidrBlock: 10.10.0.0/20
+        displayName: nodes-subnet
+    releaseChannel: REGULAR
+    nodePool:
+      machineType: e2-standard-2
+      diskSizeGb: 50
+      minNodes: 1
+      maxNodes: 2

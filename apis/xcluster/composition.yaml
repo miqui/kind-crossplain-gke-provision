@@ -1,0 +1,308 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xclusters.gcp.platform.example.org
+  labels:
+    provider: gcp
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: XCluster
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          # ---------------------------------------------------------------- VPC
+          - name: network
+            base:
+              apiVersion: compute.gcp.upbound.io/v1beta1
+              kind: Network
+              spec:
+                forProvider:
+                  autoCreateSubnetworks: false
+                  routingMode: REGIONAL
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-vpc"}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.project
+          # ------------------------------------------- Subnet + secondary ranges
+          - name: subnetwork
+            base:
+              apiVersion: compute.gcp.upbound.io/v1beta2
+              kind: Subnetwork
+              spec:
+                forProvider:
+                  privateIpGoogleAccess: true
+                  networkSelector:
+                    matchControllerRef: true
+                  secondaryIpRange:
+                    - rangeName: pods
+                    - rangeName: services
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-subnet"}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.project
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.region
+                toFieldPath: spec.forProvider.region
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.network.subnetCidr
+                toFieldPath: spec.forProvider.ipCidrRange
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.network.podsCidr
+                toFieldPath: spec.forProvider.secondaryIpRange[0].ipCidrRange
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.network.servicesCidr
+                toFieldPath: spec.forProvider.secondaryIpRange[1].ipCidrRange
+          # ------------------------------------------------------- Cloud Router
+          - name: router
+            base:
+              apiVersion: compute.gcp.upbound.io/v1beta2
+              kind: Router
+              spec:
+                forProvider:
+                  networkSelector:
+                    matchControllerRef: true
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-router"}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.project
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.region
+                toFieldPath: spec.forProvider.region
+          # --------------------------------------------------------- Cloud NAT
+          - name: nat
+            base:
+              apiVersion: compute.gcp.upbound.io/v1beta2
+              kind: RouterNAT
+              spec:
+                forProvider:
+                  natIpAllocateOption: AUTO_ONLY
+                  sourceSubnetworkIpRangesToNat: ALL_SUBNETWORKS_ALL_IP_RANGES
+                  routerSelector:
+                    matchControllerRef: true
+                  logConfig:
+                    enable: true
+                    filter: ERRORS_ONLY
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-nat"}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.project
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.region
+                toFieldPath: spec.forProvider.region
+          # ------------------------- Least-privilege node service account + IAM
+          - name: node-sa
+            base:
+              apiVersion: cloudplatform.gcp.upbound.io/v1beta1
+              kind: ServiceAccount
+              spec:
+                forProvider:
+                  displayName: GKE nodes (least privilege)
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-nodes"}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.project
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.email
+                toFieldPath: status.nodeServiceAccountEmail
+          - name: iam-log-writer
+            base:
+              apiVersion: cloudplatform.gcp.upbound.io/v1beta2
+              kind: ProjectIAMMember
+              spec:
+                forProvider:
+                  role: roles/logging.logWriter
+            patches: &iamPatches
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.project
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.nodeServiceAccountEmail
+                toFieldPath: spec.forProvider.member
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "serviceAccount:%s"}
+                policy:
+                  fromFieldPath: Required
+          - name: iam-metric-writer
+            base:
+              apiVersion: cloudplatform.gcp.upbound.io/v1beta2
+              kind: ProjectIAMMember
+              spec:
+                forProvider:
+                  role: roles/monitoring.metricWriter
+            patches: *iamPatches
+          - name: iam-monitoring-viewer
+            base:
+              apiVersion: cloudplatform.gcp.upbound.io/v1beta2
+              kind: ProjectIAMMember
+              spec:
+                forProvider:
+                  role: roles/monitoring.viewer
+            patches: *iamPatches
+          - name: iam-artifact-reader
+            base:
+              apiVersion: cloudplatform.gcp.upbound.io/v1beta2
+              kind: ProjectIAMMember
+              spec:
+                forProvider:
+                  role: roles/artifactregistry.reader
+            patches: *iamPatches
+          # ------------------------------------- Private regional GKE (control plane)
+          - name: cluster
+            base:
+              apiVersion: container.gcp.upbound.io/v1beta2
+              kind: Cluster
+              spec:
+                forProvider:
+                  # Node pools are managed separately; drop the default pool.
+                  removeDefaultNodePool: true
+                  initialNodeCount: 1
+                  deletionProtection: false
+                  enableShieldedNodes: true
+                  networkSelector:
+                    matchControllerRef: true
+                  subnetworkSelector:
+                    matchControllerRef: true
+                  ipAllocationPolicy:
+                    clusterSecondaryRangeName: pods
+                    servicesSecondaryRangeName: services
+                  privateClusterConfig:
+                    enablePrivateNodes: true
+                    enablePrivateEndpoint: true
+                  releaseChannel:
+                    channel: REGULAR
+                  workloadIdentityConfig:
+                    workloadPool: PLACEHOLDER.svc.id.goog
+                  masterAuthorizedNetworksConfig:
+                    cidrBlocks: []
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-gke"}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.project
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.region
+                toFieldPath: spec.forProvider.location
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.workloadIdentityConfig.workloadPool
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s.svc.id.goog"}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.releaseChannel
+                toFieldPath: spec.forProvider.releaseChannel.channel
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.privateCluster.enablePrivateNodes
+                toFieldPath: spec.forProvider.privateClusterConfig.enablePrivateNodes
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.privateCluster.enablePrivateEndpoint
+                toFieldPath: spec.forProvider.privateClusterConfig.enablePrivateEndpoint
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.privateCluster.masterCidr
+                toFieldPath: spec.forProvider.privateClusterConfig.masterIpv4CidrBlock
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.masterAuthorizedNetworks
+                toFieldPath: spec.forProvider.masterAuthorizedNetworksConfig.cidrBlocks
+              - type: ToCompositeFieldPath
+                fromFieldPath: metadata.annotations[crossplane.io/external-name]
+                toFieldPath: status.clusterName
+          # ------------------------------------------ Autoscaling shielded node pool
+          - name: node-pool
+            base:
+              apiVersion: container.gcp.upbound.io/v1beta2
+              kind: NodePool
+              spec:
+                forProvider:
+                  clusterSelector:
+                    matchControllerRef: true
+                  initialNodeCount: 1
+                  autoscaling:
+                    minNodeCount: 1
+                    maxNodeCount: 2
+                  management:
+                    autoRepair: true
+                    autoUpgrade: true
+                  nodeConfig:
+                    machineType: e2-standard-2
+                    diskSizeGb: 50
+                    imageType: COS_CONTAINERD
+                    oauthScopes:
+                      - https://www.googleapis.com/auth/cloud-platform
+                    serviceAccountSelector:
+                      matchControllerRef: true
+                    shieldedInstanceConfig:
+                      enableSecureBoot: true
+                      enableIntegrityMonitoring: true
+                    workloadMetadataConfig:
+                      mode: GKE_METADATA
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-pool"}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.projectId
+                toFieldPath: spec.forProvider.project
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.region
+                toFieldPath: spec.forProvider.location
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.nodePool.minNodes
+                toFieldPath: spec.forProvider.autoscaling.minNodeCount
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.nodePool.maxNodes
+                toFieldPath: spec.forProvider.autoscaling.maxNodeCount
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.nodePool.machineType
+                toFieldPath: spec.forProvider.nodeConfig.machineType
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.nodePool.diskSizeGb
+                toFieldPath: spec.forProvider.nodeConfig.diskSizeGb
+    - step: auto-ready
+      functionRef:
+        name: function-auto-ready
