@@ -1,0 +1,109 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xclusters.platform.example.org
+spec:
+  group: platform.example.org
+  names:
+    kind: XCluster
+    plural: xclusters
+  claimNames:
+    kind: GKECluster
+    plural: gkeclusters
+  defaultCompositionRef:
+    name: xclusters.gcp.platform.example.org
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [parameters]
+              properties:
+                parameters:
+                  type: object
+                  required: [projectId, region]
+                  properties:
+                    projectId:
+                      type: string
+                      description: GCP project ID that will own all resources.
+                    region:
+                      type: string
+                      description: GCP region (regional GKE cluster spans its zones).
+                    network:
+                      type: object
+                      default: {}
+                      properties:
+                        subnetCidr:
+                          type: string
+                          default: 10.10.0.0/20
+                        podsCidr:
+                          type: string
+                          default: 10.20.0.0/16
+                        servicesCidr:
+                          type: string
+                          default: 10.30.0.0/20
+                    privateCluster:
+                      type: object
+                      default: {}
+                      properties:
+                        enablePrivateNodes:
+                          type: boolean
+                          default: true
+                          enum: [true]
+                          description: Nodes get no public IPs. Only `true` is accepted.
+                        enablePrivateEndpoint:
+                          type: boolean
+                          default: true
+                          enum: [true]
+                          description: Control plane has no public endpoint. Only `true` is accepted.
+                        masterCidr:
+                          type: string
+                          default: 172.16.0.0/28
+                    masterAuthorizedNetworks:
+                      type: array
+                      description: Internal CIDRs allowed to reach the private control-plane endpoint.
+                      default:
+                        - cidrBlock: 10.10.0.0/20
+                          displayName: nodes-subnet
+                      items:
+                        type: object
+                        required: [cidrBlock]
+                        properties:
+                          cidrBlock:
+                            type: string
+                          displayName:
+                            type: string
+                    releaseChannel:
+                      type: string
+                      default: REGULAR
+                      enum: [RAPID, REGULAR, STABLE]
+                    nodePool:
+                      type: object
+                      default: {}
+                      properties:
+                        machineType:
+                          type: string
+                          default: e2-standard-2
+                        diskSizeGb:
+                          type: integer
+                          default: 50
+                        minNodes:
+                          type: integer
+                          default: 1
+                          description: Minimum nodes PER ZONE.
+                        maxNodes:
+                          type: integer
+                          default: 2
+                          description: Maximum nodes PER ZONE.
+            status:
+              type: object
+              properties:
+                clusterName:
+                  type: string
+                nodeServiceAccountEmail:
+                  type: string

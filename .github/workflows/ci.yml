@@ -1,0 +1,86 @@
+name: CI
+
+# Keyless and read-only: no secrets, no cloud credentials, nothing talks to GCP.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CROSSPLANE_VERSION: v1.20.14
+  CROSSPLANE_SHA256: 4aa434d764691c593921bcd4629e8c95933ada6762da2f214782d6b6e36aabb0
+  KUBECONFORM_VERSION: v0.7.0
+  KUBECONFORM_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3
+  OPA_VERSION: v1.20.2
+  OPA_SHA256: 69da5179ee403d10fa11bab6cfb4ffb0d23dba5f9b682fa977db772a1da5670f
+
+jobs:
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: pip install yamllint==1.37.1
+      - run: scripts/check.sh yamllint
+
+  kubeconform:
+    name: kubeconform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o kc.tgz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kc.tgz" | sha256sum -c -
+          sudo tar -xzf kc.tgz -C /usr/local/bin kubeconform
+      - run: scripts/check.sh kubeconform
+
+  crossplane-render:
+    name: crossplane-render
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install crossplane CLI
+        run: |
+          curl -fsSL -o crossplane "https://releases.crossplane.io/stable/${CROSSPLANE_VERSION}/bin/linux_amd64/crank"
+          echo "${CROSSPLANE_SHA256}  crossplane" | sha256sum -c -
+          sudo install -m 0755 crossplane /usr/local/bin/crossplane
+      - run: scripts/check.sh render
+
+  crossplane-validate:
+    name: crossplane-validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install crossplane CLI
+        run: |
+          curl -fsSL -o crossplane "https://releases.crossplane.io/stable/${CROSSPLANE_VERSION}/bin/linux_amd64/crank"
+          echo "${CROSSPLANE_SHA256}  crossplane" | sha256sum -c -
+          sudo install -m 0755 crossplane /usr/local/bin/crossplane
+      - run: scripts/check.sh validate
+
+  policy:
+    name: policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install opa
+        run: |
+          curl -fsSL -o opa "https://github.com/open-policy-agent/opa/releases/download/${OPA_VERSION}/opa_linux_amd64_static"
+          echo "${OPA_SHA256}  opa" | sha256sum -c -
+          sudo install -m 0755 opa /usr/local/bin/opa
+      - run: scripts/check.sh policy

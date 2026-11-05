@@ -1,0 +1,6 @@
+# Small single-node kind cluster: the long-lived Crossplane control plane.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: crossplane-mgmt
+nodes:
+  - role: control-plane
